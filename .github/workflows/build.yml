@@ -1,0 +1,174 @@
+name: Build
+
+# Builds lo from the private source repository. A v* tag publishes; running it by hand tests a ref.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Source branch, tag or commit
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_REF: ${{ inputs.ref || github.ref_name }}
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AdhishaInd/myvcs
+          ref: ${{ env.SOURCE_REF }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          persist-credentials: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-test-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-test-
+      - run: cargo test --workspace --no-fail-fast
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-24.04, server: true }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm, server: true }
+          - { target: x86_64-apple-darwin, os: macos-15-intel, server: false }
+          - { target: aarch64-apple-darwin, os: macos-15, server: false }
+          - { target: x86_64-pc-windows-msvc, os: windows-2025, server: false }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AdhishaInd/myvcs
+          ref: ${{ env.SOURCE_REF }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          persist-credentials: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.target }}-dist-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ matrix.target }}-dist-
+      - name: Toolchain
+        shell: bash
+        run: |
+          rustup target add ${{ matrix.target }}
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools; fi
+      - name: Build
+        shell: bash
+        run: cargo build --profile dist --locked --target ${{ matrix.target }} -p myvcs-client -p myvcs-daemon
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir dist
+          ext=""
+          if [ "$RUNNER_OS" = Windows ]; then ext=.exe; fi
+          from="target/${{ matrix.target }}/dist"
+          cp "$from/lo$ext" "dist/lo-${{ matrix.target }}$ext"
+          if [ "${{ matrix.server }}" = true ]; then cp "$from/myvcsd$ext" "dist/myvcsd-${{ matrix.target }}$ext"; fi
+          ls -l dist
+          if [ "$RUNNER_OS" = Linux ]; then
+            file dist/*
+            if ldd "dist/lo-${{ matrix.target }}" 2>&1 | grep -q '=>'; then echo "::error::not static"; exit 1; fi
+          fi
+      - name: Smoke test
+        shell: bash
+        run: |
+          ext=""
+          if [ "$RUNNER_OS" = Windows ]; then ext=.exe; fi
+          packaging/smoke.sh "target/${{ matrix.target }}/dist/lo$ext" "target/${{ matrix.target }}/dist/myvcsd$ext"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        with:
+          name: install-scripts
+          path: |
+            packaging/install.sh
+            packaging/install.ps1
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: artifacts
+      - name: Assemble
+        run: |
+          mkdir release
+          find artifacts -type f -exec cp {} release/ \;
+          cd release
+          echo "${GITHUB_REF_NAME#v}" >VERSION
+          sha256sum lo-* myvcsd-* install.sh install.ps1 >SHA256SUMS
+          ls -l
+          cat SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            release/lo-*
+            release/myvcsd-*
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "lo ${GITHUB_REF_NAME#v}" \
+            --notes "Install: see the [README](https://github.com/$GITHUB_REPOSITORY#install). Upgrade: \`lo upgrade\`."
+
+  installed:
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - name: Install and check (Unix)
+        if: runner.os != 'Windows'
+        shell: sh
+        run: |
+          curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/install.sh" | sh
+          "$HOME/.local/bin/lo" --version | grep -qx "lo ${GITHUB_REF_NAME#v}"
+          "$HOME/.local/bin/lo" upgrade --check
+      - name: Install and check (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          irm "https://github.com/$env:GITHUB_REPOSITORY/releases/latest/download/install.ps1" | iex
+          $v = & "$env:LOCALAPPDATA\Programs\lo\lo.exe" --version
+          if ($v -ne "lo $($env:GITHUB_REF_NAME.TrimStart('v'))") { throw "installed $v" }
+          & "$env:LOCALAPPDATA\Programs\lo\lo.exe" upgrade --check
+          if ($LASTEXITCODE -ne 0) { throw "upgrade --check failed" }
