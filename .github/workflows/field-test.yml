@@ -48,11 +48,10 @@ jobs:
           lo --version
           echo "$TOKEN" | lo login "$URL"
           lo whoami "$URL"
-          lo get "$URL/proj" w
+          lo get "$URL/proj2" w
           cd w
-          lo status | tee status.out
-          grep -q 'No local changes' status.out
-          rm status.out
+          lo status | tee ../status.out
+          grep -q 'No local changes' ../status.out
           [ "$(cat README.md | wc -l)" -gt 10 ]
           ls -la
 
@@ -100,7 +99,7 @@ jobs:
           curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/install.sh" | sh
           export PATH="$HOME/.local/bin:$PATH"
           echo "$TOKEN" | lo login "$URL"
-          lo get "$URL/proj" w
+          lo get "$URL/proj2" w
           cd w
           for n in linux-x64 linux-arm64 mac-arm64 mac-x64 windows; do
             [ -f "field/$n.txt" ]
