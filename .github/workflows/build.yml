@@ -148,6 +148,8 @@ jobs:
           subject-path: |
             release/lo-*
             release/myvcsd-*
+            release/install.sh
+            release/install.ps1
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
