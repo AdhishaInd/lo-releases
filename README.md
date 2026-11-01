@@ -7,13 +7,32 @@
 Linux and macOS:
 
 ```sh
-curl -fsSL https://github.com/AdhishaInd/lo-releases/releases/latest/download/install.sh | sh
+curl --proto '=https' -fsSL https://github.com/AdhishaInd/lo-releases/releases/latest/download/install.sh | sh
+```
+
+In a script, or to check the installer before running it, keep the steps apart: the pipe above reports `sh`'s result, so a failed download can still count as success.
+
+```sh
+curl --proto '=https' -fsSLO https://github.com/AdhishaInd/lo-releases/releases/latest/download/install.sh &&
+  gh attestation verify install.sh -R AdhishaInd/lo-releases &&
+  sh install.sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
 irm https://github.com/AdhishaInd/lo-releases/releases/latest/download/install.ps1 | iex
+```
+
+Windows PowerShell can't be told to refuse a redirect to plain http on that first download, though the script itself checks everything it fetches. To rule that out too, or in a script:
+
+```powershell
+curl.exe --proto '=https' -fsSLO https://github.com/AdhishaInd/lo-releases/releases/latest/download/install.ps1
+if (-not $?) { throw "the download failed" }
+gh attestation verify install.ps1 -R AdhishaInd/lo-releases
+if (-not $?) { throw "the installer couldn't be verified" }
+powershell -ExecutionPolicy Bypass -File install.ps1
+if (-not $?) { throw "installing failed" }
 ```
 
 Later, `lo upgrade` moves to the latest release.

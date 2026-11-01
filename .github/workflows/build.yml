@@ -44,13 +44,7 @@ jobs:
       - name: Test
         shell: bash
         run: |
-          # Servers are released for Linux only: on Windows, myvcsd is what the client's tests
-          # talk to, and its own tests don't run.
-          if [ "$RUNNER_OS" = Windows ]; then
-            cargo test -p myvcs-client -p myvcs-core --no-fail-fast
-          else
-            cargo test --workspace --no-fail-fast
-          fi
+          cargo test --workspace --no-fail-fast
 
   build:
     strategy:
