@@ -1,0 +1,116 @@
+name: Field test
+
+# One-off: released lo on every system, all working on one project on a real server.
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Server origin
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  work:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, name: linux-x64 }
+          - { os: ubuntu-24.04-arm, name: linux-arm64 }
+          - { os: macos-15, name: mac-arm64 }
+          - { os: macos-15-intel, name: mac-x64 }
+          - { os: windows-2025, name: windows }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      URL: ${{ inputs.url }}
+      NAME: ${{ matrix.name }}
+    steps:
+      - name: Install (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/install.sh" | sh
+          echo "$HOME/.local/bin" >>"$GITHUB_PATH"
+      - name: Install (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          irm "https://github.com/$env:GITHUB_REPOSITORY/releases/latest/download/install.ps1" | iex
+          Add-Content $env:GITHUB_PATH "$env:LOCALAPPDATA\Programs\lo"
+      - name: Work
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.FIELD_TOKEN }}
+        run: |
+          set -x
+          lo --version
+          echo "$TOKEN" | lo login "$URL"
+          lo whoami "$URL"
+          lo get "$URL/proj" w
+          cd w
+          lo status | tee status.out
+          grep -q 'No local changes' status.out
+          rm status.out
+          [ "$(cat README.md | wc -l)" -gt 10 ]
+          ls -la
+
+          # A save, then a landing, with others landing at the same time.
+          mkdir -p field
+          printf 'from %s\r\nsecond line\r\n' "$NAME" >"field/$NAME.txt"
+          printf 'edit by %s\n' "$NAME" >"field/$NAME-unicode-café.txt"
+          lo status
+          lo diff "field/$NAME.txt"
+          lo save -m "Save from $NAME"
+          ok=
+          for try in 1 2 3 4 5 6 7 8; do
+            if lo commit -y; then ok=1; break; fi
+            sleep $((try * 2))
+            lo rebase || lo get || true
+          done
+          [ -n "$ok" ]
+
+          # Nothing looks changed afterwards: exec bits and symlinks are as the project has them.
+          lo status | tee ../status.out
+          grep -q 'No local changes' ../status.out
+
+          # Touching a mode-carrying file changes its content and nothing else.
+          if [ "$NAME" = windows ]; then
+            [ ! -L link ]
+            [ "$(cat link)" = README.md ]
+            printf '# %s\n' "$NAME" >>run.sh
+            lo commit -y -m "Windows edits run.sh" || { lo get; lo commit -y -m "Windows edits run.sh"; }
+          else
+            [ -L link ]
+            [ -x run.sh ]
+          fi
+          lo log | head -12
+
+  check:
+    needs: work
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      URL: ${{ inputs.url }}
+      TOKEN: ${{ secrets.FIELD_TOKEN }}
+    steps:
+      - run: |
+          set -x
+          curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/install.sh" | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$TOKEN" | lo login "$URL"
+          lo get "$URL/proj" w
+          cd w
+          for n in linux-x64 linux-arm64 mac-arm64 mac-x64 windows; do
+            [ -f "field/$n.txt" ]
+            [ -f "field/$n-unicode-café.txt" ]
+            [ "$(head -c 5 "field/$n.txt")" = "from " ]
+          done
+          grep -q $'\r' field/windows.txt
+          [ -L link ]
+          [ "$(readlink link)" = README.md ]
+          [ -x run.sh ]
+          grep -q '# windows' run.sh
+          lo log
+          lo status
