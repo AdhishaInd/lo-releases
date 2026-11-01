@@ -161,6 +161,8 @@ jobs:
 
   installed:
     needs: publish
+    env:
+      GH_TOKEN: ${{ github.token }}
     strategy:
       fail-fast: false
       matrix:
@@ -174,7 +176,7 @@ jobs:
         run: |
           curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/install.sh" | sh
           "$HOME/.local/bin/lo" --version | grep -qx "lo ${GITHUB_REF_NAME#v}"
-          "$HOME/.local/bin/lo" upgrade --check
+          "$HOME/.local/bin/lo" upgrade --check | grep -q "up to date"
       - name: Install and check (Windows)
         if: runner.os == 'Windows'
         shell: powershell
@@ -184,3 +186,37 @@ jobs:
           if ($v -ne "lo $($env:GITHUB_REF_NAME.TrimStart('v'))") { throw "installed $v" }
           & "$env:LOCALAPPDATA\Programs\lo\lo.exe" upgrade --check
           if ($LASTEXITCODE -ne 0) { throw "upgrade --check failed" }
+      # The way users move: the release before this one, then lo upgrade.
+      - name: Upgrade from the previous release (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          previous="$(gh release list --repo "$GITHUB_REPOSITORY" --json tagName --jq '.[].tagName' | grep -vx "$GITHUB_REF_NAME" | head -n 1)"
+          if [ -z "$previous" ]; then echo "The first release: nothing to upgrade from."; exit 0; fi
+          dir="$RUNNER_TEMP/previous"
+          curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/install.sh" | LO_VERSION="$previous" LO_INSTALL_DIR="$dir" sh
+          "$dir/lo" --version | grep -qx "lo ${previous#v}"
+          "$dir/lo" upgrade --check | grep -q "${GITHUB_REF_NAME#v} is out"
+          "$dir/lo" upgrade
+          "$dir/lo" --version | grep -qx "lo ${GITHUB_REF_NAME#v}"
+          "$dir/lo" upgrade | grep -q "up to date"
+          ls -la "$dir"
+      - name: Upgrade from the previous release (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $previous = gh release list --repo $env:GITHUB_REPOSITORY --json tagName --jq '.[].tagName' | Where-Object { $_ -ne $env:GITHUB_REF_NAME } | Select-Object -First 1
+          if (-not $previous) { Write-Host "The first release: nothing to upgrade from."; exit 0 }
+          $env:LO_VERSION = $previous
+          $env:LO_INSTALL_DIR = "$env:RUNNER_TEMP\previous"
+          irm "https://github.com/$env:GITHUB_REPOSITORY/releases/latest/download/install.ps1" | iex
+          $lo = "$env:LO_INSTALL_DIR\lo.exe"
+          $v = & $lo --version
+          if ($v -ne "lo $($previous.TrimStart('v'))") { throw "installed $v" }
+          & $lo upgrade
+          if ($LASTEXITCODE -ne 0) { throw "upgrade failed" }
+          $v = & $lo --version
+          if ($v -ne "lo $($env:GITHUB_REF_NAME.TrimStart('v'))") { throw "upgraded to $v" }
+          & $lo upgrade
+          if ($LASTEXITCODE -ne 0) { throw "second upgrade failed" }
+          Get-ChildItem -Force $env:LO_INSTALL_DIR
