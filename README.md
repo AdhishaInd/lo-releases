@@ -28,8 +28,11 @@ Windows PowerShell can't be told to refuse a redirect to plain http on that firs
 
 ```powershell
 curl.exe --proto '=https' -fsSLO https://github.com/AdhishaInd/lo-releases/releases/latest/download/install.ps1
+if (-not $?) { throw "the download failed" }
 gh attestation verify install.ps1 -R AdhishaInd/lo-releases
-if ($?) { powershell -ExecutionPolicy Bypass -File install.ps1 }
+if (-not $?) { throw "the installer couldn't be verified" }
+powershell -ExecutionPolicy Bypass -File install.ps1
+if (-not $?) { throw "installing failed" }
 ```
 
 Later, `lo upgrade` moves to the latest release.
