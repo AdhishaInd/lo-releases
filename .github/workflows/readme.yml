@@ -14,8 +14,9 @@ permissions:
 
 env:
   GH_TOKEN: ${{ github.token }}
-  # Until it's merged, the script on main isn't this pull request's.
-  RAW_REF: ${{ github.event.pull_request.head.sha || 'main' }}
+  # Until it's merged, the script on main isn't this pull request's. On a pull request this
+  # is the merge result, which is what's checked out.
+  RAW_REF: ${{ github.sha }}
 
 jobs:
   windows:
@@ -54,6 +55,11 @@ jobs:
 
           foreach ($i in 0, 1) {
               $text = $blocks[$i].Replace('/lo-releases/main/', "/lo-releases/$env:RAW_REF/")
+              # Pasted into someone's session, it mustn't change that session.
+              if ($i -eq 0) {
+                  $text += "if (`$ErrorActionPreference -ne 'Continue') { throw 'changed the error setting' }`n"
+                  $text += "if (Get-Command Test-Secure -ErrorAction SilentlyContinue) { throw 'left its functions behind' }`n"
+              }
               Write-Host "--- block $i`n$text"
               $r = Run-Block $text "block$i"
               if ($r.Code -ne 0) { throw "block $i exited with $($r.Code)" }
