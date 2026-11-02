@@ -21,10 +21,12 @@ curl --proto '=https' -fsSLO https://github.com/AdhishaInd/lo-releases/releases/
 Windows (PowerShell):
 
 ```powershell
-irm https://github.com/AdhishaInd/lo-releases/releases/latest/download/install.ps1 | iex
+irm -MaximumRedirection 0 https://raw.githubusercontent.com/AdhishaInd/lo-releases/main/install.ps1 | iex
 ```
 
-Windows PowerShell can't be told to refuse a redirect to plain http on that first download, though the script itself checks everything it fetches. To rule that out too, or in a script:
+This address answers without a redirect, and the command refuses any, so nothing can move the download off https. The script checks everything it fetches itself.
+
+In a script, or to check the installer's build provenance before running it:
 
 ```powershell
 curl.exe --proto '=https' -fsSLO https://github.com/AdhishaInd/lo-releases/releases/latest/download/install.ps1

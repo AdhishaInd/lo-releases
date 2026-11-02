@@ -45,6 +45,10 @@ jobs:
         shell: bash
         run: |
           cargo test --workspace --no-fail-fast
+      # The README's first Windows command fetches the copy on main, so it can't redirect.
+      - name: The installer on main is this release's
+        if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/v')
+        run: curl --proto '=https' -fsSL "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/main/install.ps1" | cmp - packaging/install.ps1
 
   build:
     strategy:
