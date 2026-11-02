@@ -1,0 +1,108 @@
+name: README commands
+
+# Runs the install commands exactly as the README gives them.
+on:
+  pull_request:
+    paths: [README.md, install.ps1, .github/workflows/readme.yml]
+  push:
+    branches: [main]
+    paths: [README.md, install.ps1, .github/workflows/readme.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  # Until it's merged, the script on main isn't this pull request's. On a pull request this
+  # is the merge result, which is what's checked out.
+  RAW_REF: ${{ github.sha }}
+
+jobs:
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run each PowerShell block
+        shell: pwsh
+        env:
+          SHELL_UNDER_TEST: ${{ matrix.shell }}
+        run: |
+          $readme = (Get-Content -Raw README.md).Replace("`r`n", "`n")
+          $install = [regex]::Match($readme, '(?s)## Install\n(.*?)\n## ').Groups[1].Value
+          $blocks = [regex]::Matches($install, '(?s)```powershell\n(.*?)```') | ForEach-Object { $_.Groups[1].Value }
+          if ($blocks.Count -ne 2) { throw "expected 2 blocks, found $($blocks.Count)" }
+
+          function Run-Block($text, $name) {
+              $dir = Join-Path $env:RUNNER_TEMP $name
+              New-Item -ItemType Directory -Force $dir | Out-Null
+              $file = Join-Path $dir 'block.ps1'
+              Set-Content -Path $file -Value $text
+              Push-Location $dir
+              $env:LO_INSTALL_DIR = Join-Path $dir 'bin'
+              & $env:SHELL_UNDER_TEST -NoProfile -ExecutionPolicy Bypass -File $file
+              $code = $LASTEXITCODE
+              Pop-Location
+              return @{ Code = $code; Lo = Join-Path $env:LO_INSTALL_DIR 'lo.exe' }
+          }
+
+          foreach ($i in 0, 1) {
+              $text = $blocks[$i].Replace('/lo-releases/main/', "/lo-releases/$env:RAW_REF/")
+              # Pasted into someone's session, it mustn't change that session.
+              if ($i -eq 0) {
+                  $text = "`$securityBefore = [Net.ServicePointManager]::SecurityProtocol`n" + $text
+                  $text += "if ([Net.ServicePointManager]::SecurityProtocol -ne `$securityBefore) { throw 'changed the TLS setting' }`n"
+                  $text += "if (`$ErrorActionPreference -ne 'Continue') { throw 'changed the error setting' }`n"
+                  $text += "if (Get-Command Test-Secure -ErrorAction SilentlyContinue) { throw 'left its functions behind' }`n"
+              }
+              Write-Host "--- block $i`n$text"
+              $r = Run-Block $text "block$i"
+              if ($r.Code -ne 0) { throw "block $i exited with $($r.Code)" }
+              $v = & $r.Lo --version
+              if ($v -notmatch '^lo \d') { throw "block $i installed: $v" }
+              Write-Host "block $i installed $v"
+          }
+
+          # The steps have to stop at the first failure.
+          $broken = $blocks[1].Replace('/download/install.ps1', '/download/no-such-file.ps1')
+          $r = Run-Block $broken 'broken'
+          if ($r.Code -eq 0) { throw "a failed download went unnoticed" }
+          if (Test-Path $r.Lo) { throw "installed after a failed download" }
+          Write-Host 'a failed download stops it'
+
+          # And the first command has to refuse a redirect.
+          $redirected = $blocks[0].Replace("https://raw.githubusercontent.com/AdhishaInd/lo-releases/main/install.ps1", 'https://github.com/AdhishaInd/lo-releases/releases/latest/download/install.ps1')
+          if ($redirected -eq $blocks[0]) { throw "the first command's address changed" }
+          $r = Run-Block $redirected 'redirected'
+          if (Test-Path $r.Lo) { throw "followed a redirect" }
+          Write-Host 'a redirect is refused'
+
+  unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run each sh block
+        shell: bash
+        run: |
+          awk '/^## Install/{on=1;next} /^## /{on=0} on' README.md >install.md
+          awk '/^```sh$/{n++;f="block" n ".sh";next} /^```$/{f="";next} f{print >f}' install.md
+          test -f block1.sh && test -f block2.sh && test ! -f block3.sh
+          for b in block1 block2; do
+            mkdir "$RUNNER_TEMP/$b"
+            (cd "$RUNNER_TEMP/$b" && LO_INSTALL_DIR="$PWD/bin" sh "$GITHUB_WORKSPACE/$b.sh")
+            "$RUNNER_TEMP/$b/bin/lo" --version
+          done
