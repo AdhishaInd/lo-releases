@@ -57,6 +57,8 @@ jobs:
               $text = $blocks[$i].Replace('/lo-releases/main/', "/lo-releases/$env:RAW_REF/")
               # Pasted into someone's session, it mustn't change that session.
               if ($i -eq 0) {
+                  $text = "`$securityBefore = [Net.ServicePointManager]::SecurityProtocol`n" + $text
+                  $text += "if ([Net.ServicePointManager]::SecurityProtocol -ne `$securityBefore) { throw 'changed the TLS setting' }`n"
                   $text += "if (`$ErrorActionPreference -ne 'Continue') { throw 'changed the error setting' }`n"
                   $text += "if (Get-Command Test-Secure -ErrorAction SilentlyContinue) { throw 'left its functions behind' }`n"
               }
