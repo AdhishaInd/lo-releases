@@ -49,7 +49,7 @@ The scripts install for your user only, and check each download against the rele
 | macOS | x86-64, Apple Silicon |
 | Windows | x86-64 (also runs on Windows on Arm) |
 
-Linux releases also carry `myvcsd`, the server.
+Linux and Windows releases also carry `myvcsd`, the server. On Windows, keep its data on a local NTFS disk.
 
 Builds aren't signed yet. Installing with the commands above avoids most warnings; a browser download on macOS or Windows will warn until signing is set up.
 

@@ -59,7 +59,7 @@ jobs:
           - { target: aarch64-unknown-linux-musl, os: ubuntu-24.04-arm, server: true }
           - { target: x86_64-apple-darwin, os: macos-15-intel, server: false }
           - { target: aarch64-apple-darwin, os: macos-15, server: false }
-          - { target: x86_64-pc-windows-msvc, os: windows-2025, server: false }
+          - { target: x86_64-pc-windows-msvc, os: windows-2025, server: true }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
