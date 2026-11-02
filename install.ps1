@@ -116,10 +116,15 @@
             $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
             try {
                 $userPath = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-                $entries = $userPath -split ';' | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_) }
+                # Kept as it is: in a plain string, a %NAME% is that literal directory.
+                $kind = if ($key.GetValueNames() -contains 'Path') { $key.GetValueKind('Path') } else { [Microsoft.Win32.RegistryValueKind]::ExpandString }
+                $entries = $userPath -split ';'
+                if ($kind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString) {
+                    $entries = $entries | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_) }
+                }
                 $isNew = -not ($entries -contains $dir)
                 if ($isNew) {
-                    $key.SetValue('Path', ($(if ($userPath) { "$userPath;" } else { '' }) + $dir), [Microsoft.Win32.RegistryValueKind]::ExpandString)
+                    $key.SetValue('Path', ($(if ($userPath) { "$userPath;" } else { '' }) + $dir), $kind)
                 }
             } finally {
                 $key.Dispose()
